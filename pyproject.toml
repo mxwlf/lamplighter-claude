@@ -40,6 +40,8 @@ test = [
     "coverage",
     "pytest",
     "respx",
+    "pyyaml",
+    "openapi-spec-validator",
 ]
 typecheck = [
     "ty",
