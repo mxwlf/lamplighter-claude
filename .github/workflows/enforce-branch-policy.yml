@@ -1,0 +1,20 @@
+# ---------------------------------------------------------------------------
+# Enforce branch merge policy: main only accepts PRs from develop
+# ---------------------------------------------------------------------------
+name: enforce-branch-policy
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  check-source-branch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify PR source is develop
+        run: |
+          if [ "${{ github.head_ref }}" != "develop" ]; then
+            echo "::error::PRs to main must come from the develop branch. Source branch: ${{ github.head_ref }}"
+            exit 1
+          fi
+          echo "✓ PR source branch is develop"
