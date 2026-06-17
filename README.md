@@ -1,193 +1,168 @@
-# git-template
+# Lamplighter
 
-My baseline git template. It ships a shared git configuration and a set of
-[pre-commit](https://pre-commit.com) hooks so every repo started from this
-template gets consistent commit hygiene and commit-message formatting out of
-the box.
+Lamplighter is an agent harness that prepares a local agent to participate in
+coding activities defined by an orchestrator. It reads an **agent definition**
+from the orchestrator and bootstraps the local environment the agent needs —
+starting with **skills**.
 
-## Requirements
+Lamplighter assumes it runs in a **task-scoped, disposable environment** (a
+per-task container the orchestrator provisions and discards). Because the box
+is dedicated to a single task, orchestrator-managed skills are installed
+globally for the agent and overwritten in place on repeated runs.
 
-- [`pre-commit`](https://pre-commit.com) installed and on your `PATH`:
-  ```sh
-  pipx install pre-commit   # or: brew install pre-commit
-  ```
-- A **Python 3.10** interpreter installed on your system (required by the
-  [commitizen](https://commitizen-tools.github.io/commitizen/) and
-  [sync-pre-commit-deps](https://github.com/pre-commit/sync-pre-commit-deps)
-  hooks). Install instructions per platform:
+## How it works
 
-  | Platform | Install command |
-  | --- | --- |
-  | macOS (Homebrew) | `brew install python@3.10` |
-  | Linux (Debian/Ubuntu) | `sudo apt install python3.10` |
-  | Linux (any, via pyenv) | `pyenv install 3.10` |
-  | Windows | Download from [python.org](https://www.python.org/downloads/) (the installer registers it with the `py` launcher as `py -3.10`). |
+When you run `lamplighter bootstrap`, the harness:
 
-  > **Why exactly 3.10?** Some hooks require Python `>=3.10`, but pre-commit
-  > otherwise uses each hook's own default interpreter (`python3` in their
-  > manifests) — which on many systems (notably macOS) is an older 3.9 that
-  > fails to build the hook environments with `requires a different Python`. The
-  > template therefore sets `language_version: python3.10` explicitly on the
-  > affected hooks in [`.pre-commit-config.yaml`](.pre-commit-config.yaml).
-  > (A top-level `default_language_version` would *not* work here: pre-commit
-  > only applies it to hooks that don't already declare their own
-  > `language_version`, and these hooks do.) `python3.10` is a version request
-  > that pre-commit resolves to a real interpreter on Windows, Linux, and macOS
-  > (on Windows through the `py` launcher). A Python **3.10** interpreter
-  > therefore needs to be installed, though it does not need to be your default
-  > `python3`. To standardize on a newer version, change the `language_version`
-  > values in [`.pre-commit-config.yaml`](.pre-commit-config.yaml) (see
-  > [Troubleshooting](#troubleshooting)).
+1. Reads the agent id and service URLs from the environment.
+2. Requests the agent definition from the **agent definition service**
+   (`GET {AGENT_DEFINITION_SERVICE_URL}/agents/{AGENT_ID}`).
+3. For each skill named in the definition, fetches the skill's `SKILL.md` text
+   from the **document service**
+   (`GET {DOCUMENT_SERVICE_URL}/documents/{name}`, with an optional `version`).
+4. Installs each skill to `~/.claude/skills/<name>/SKILL.md` so the local agent
+   discovers it.
 
-## Setup
+Bootstrap is **fail-fast**: the first fetch or write error aborts the whole run
+with a non-zero exit code, so a half-prepared agent never proceeds. Installs
+are **idempotent** — re-running overwrites skills in place — and each skill is
+written atomically.
 
-From the repository root:
+> Lamplighter is built in two layers. This release implements the **bootstrap
+> layer** (installing skills). A future **launch layer** will drive the agent's
+> execution via the [Claude Agent SDK](https://pypi.org/project/claude-agent-sdk/)
+> and is where coming-soon agent-definition elements such as **MCP servers** and
+> **hooks** will be configured in code. The seam for that work exists in
+> `lamplighter.launch` but is not yet implemented.
+
+## Installation
+
+Lamplighter is a Python package (requires Python >= 3.12) managed with
+[uv](https://docs.astral.sh/uv/):
 
 ```sh
-make setup
+uv sync
 ```
 
-This runs:
+This installs the package and the `lamplighter` console command into the
+project environment. Run commands with `uv run lamplighter …`, or activate the
+environment and call `lamplighter` directly.
+
+## Configuration
+
+Lamplighter is configured entirely through environment variables. The three
+required variables must be set or the harness exits with code `2` and a message
+naming every missing variable.
+
+| Variable | Required | Description |
+| --- | --- | --- |
+| `AGENT_ID` | Yes | Identifier for the local agent; used to request its agent definition. |
+| `AGENT_DEFINITION_SERVICE_URL` | Yes | Base URL of the agent definition service. A trailing slash is normalized away. |
+| `DOCUMENT_SERVICE_URL` | Yes | Base URL of the document service. A trailing slash is normalized away. |
+| `LAMPLIGHTER_SKILLS_DIR` | No | Install root for skills. Defaults to `~/.claude/skills`. `~` is expanded. |
+
+No authentication is required in this release.
+
+## Usage
 
 ```sh
-git config --local include.path ../.gitconfig
+export AGENT_ID="agent-007"
+export AGENT_DEFINITION_SERVICE_URL="https://orchestrator.example/agent-definitions"
+export DOCUMENT_SERVICE_URL="https://orchestrator.example/documents"
+
+uv run lamplighter bootstrap
 ```
 
-which makes the repo's local config include the committed [`.gitconfig`](.gitconfig).
-That config sets `core.hooksPath = .githooks/`, activating the committed hook
-scripts. Because the hooks live in `.githooks/` and are wired up through
-`include.path`, **`pre-commit install` is not required**.
+On success, Lamplighter prints the agent id and the path of each installed
+skill, and exits `0`:
 
-Run `make help` (or just `make`) to list the available targets.
+```
+Bootstrapped agent agent-007
+Installed 2 skill(s):
+  /home/agent/.claude/skills/diagnose/SKILL.md
+  /home/agent/.claude/skills/review/SKILL.md
+```
 
-## What gets configured
+### Exit codes
 
-| File | Purpose |
+| Code | Meaning |
 | --- | --- |
-| [`.gitconfig`](.gitconfig) | Sets `core.hooksPath = .githooks/` so the committed hooks are used. |
-| [`.githooks/pre-commit`](.githooks/pre-commit) | Runs the `pre-commit`-stage hooks (formatting, secret detection, etc.). |
-| [`.githooks/commit-msg`](.githooks/commit-msg) | Runs commitizen to enforce [Conventional Commits](https://www.conventionalcommits.org/) message format. |
-| [`.pre-commit-config.yaml`](.pre-commit-config.yaml) | Declares the hook repos and versions, and pins the Python interpreter (`language_version: python3.10`) on the Python hooks that require it. |
+| `0` | Success — all named skills were installed. |
+| `1` | Bootstrap failed at runtime (a document could not be fetched, or a skill could not be written). |
+| `2` | Configuration error — a required environment variable is missing or empty. |
 
-### Hooks included
+## Service contracts
 
-- **pre-commit-hooks**: trailing whitespace, end-of-file fixer, YAML checks,
-  large-file guard (blocks files over 500 kB by default), case-conflict
-  detection (catches filename collisions on case-insensitive filesystems like
-  macOS/Windows), illegal Windows names, merge-conflict markers, private-key
-  detection, byte-order-marker fix, and mixed line endings.
-- **gitleaks**: scans for hardcoded secrets.
-- **commitizen** (`commit-msg` stage): validates commit messages follow the
-  Conventional Commits format, e.g.:
-  ```
-  feat: add user login
-  fix(api): handle null response
-  chore: bump dependencies
-  ```
-- **sync-pre-commit-deps**: keeps hook dependency versions in sync.
+Lamplighter talks to two orchestrator services. Both are described with
+OpenAPI 3.1 in the [`openapi/`](openapi/) directory:
 
-## CI/CD integration
+- [`openapi/agent-definition-service.yaml`](openapi/agent-definition-service.yaml) —
+  `GET /agents/{agent_id}` returns the agent definition as JSON.
+- [`openapi/document-service.yaml`](openapi/document-service.yaml) —
+  `GET /documents/{name}` (optional `version` query) returns the raw `SKILL.md`
+  text as `text/plain`.
 
-This template is designed so that wiring it into **any** CI/CD platform is
-simple and deterministic. It follows the industry-standard *thin wrapper*
-pattern (see [Martin Fowler on Continuous
-Integration](https://martinfowler.com/articles/continuousIntegration.html#AutomateTheBuild)):
-all the actual check logic lives **in the repository** behind a single command,
-and each CI platform's config does nothing more than check out the code,
-install prerequisites, and run that one command.
+### Agent definition (JSON)
 
-```
-make ci                       ← single source of truth (runs locally too)
-  └── pre-commit run --all-files
-        └── hooks in .pre-commit-config.yaml
-
-.github/workflows/ci.yml      ← thin stub: checkout → setup → `make ci`
-azure-pipelines.yml           ← thin stub: checkout → setup → `make ci`
+```json
+{
+  "agent_id": "agent-007",
+  "skills": [
+    { "name": "diagnose", "version": "1.2.0" },
+    { "name": "review" }
+  ],
+  "task": {
+    "context": "Fix the failing build.",
+    "instructions": "Run the tests, identify the regression, and patch it."
+  }
+}
 ```
 
-The same `make ci` a developer runs on their laptop is exactly what runs on
-GitHub Actions and Azure DevOps. To change *what* CI does, edit the
-[`Makefile`](Makefile) and [`.pre-commit-config.yaml`](.pre-commit-config.yaml)
-— **not** the platform YAML.
+- `skills` is a list of objects, each with a required `name` and an optional
+  opaque `version`. When `version` is present it is forwarded to the document
+  service; when absent, the document service returns the default revision.
+- `task` is modeled but not acted on in this release.
+- Unknown top-level keys (e.g. future `hooks` or `mcps`) are ignored, so the
+  contract can grow without breaking existing clients.
 
-| File | Purpose |
-| --- | --- |
-| [`Makefile`](Makefile) (`make ci`) | The portable entrypoint. All check logic lives here. Extend it with your project's build/test commands. |
-| [`.github/workflows/ci.yml`](.github/workflows/ci.yml) | Thin GitHub Actions stub that runs `make ci`. |
-| [`azure-pipelines.yml`](azure-pipelines.yml) | Thin Azure DevOps stub that runs `make ci`. |
+## Development
 
-### Extending `make ci` for your project
+This repo follows a **thin-wrapper CI** pattern: all check logic lives behind a
+single `make ci` command that runs identically on a developer laptop and on
+every CI platform.
 
-Add your build/test steps to the `ci` target in the [`Makefile`](Makefile). For
-example, for a .NET project:
-
-```make
-ci: check-pre-commit lint test ## Run the full CI check suite
-
-test: ## Run the test suite
-	dotnet test
+```sh
+make ci      # run the full check suite (pre-commit + ruff + ty + pytest + build)
+make py-test # run the test suite only
+make help    # list all targets
 ```
 
-Because the logic is in the Makefile, those steps run identically locally and
-on every CI platform — no YAML changes required.
+`make ci` runs:
 
-### What you still configure per platform (and why)
+- the [pre-commit](https://pre-commit.com) hooks (formatting, secret
+  detection, conventional-commit message checks),
+- `ruff` (format check + lint),
+- `ty` (type check),
+- `pytest` (the test suite — HTTP is mocked with `respx`, so no live network or
+  Anthropic credentials are needed), and
+- `uv build` (packaging check).
 
-The thin-wrapper pattern minimizes platform-specific config but cannot
-eliminate it. Each platform requires its own small YAML stub, and a few
-concerns are inherently platform-specific and **cannot** be pushed into a
-portable script:
+The GitHub Actions and Azure DevOps stubs do nothing more than check out the
+code, install the prerequisites (`pre-commit`, `uv`), and run `make ci`. To
+change *what* CI does, edit the [`Makefile`](Makefile) and
+[`.pre-commit-config.yaml`](.pre-commit-config.yaml) — not the platform YAML.
 
-- **The stub file itself** — GitHub needs `.github/workflows/*.yml`; Azure
-  DevOps needs `azure-pipelines.yml`. The template ships both, pre-wired to
-  `make ci`.
-- **Triggers** (which branches/events run CI) — expressed differently on each
-  platform. Both stubs ship pre-configured to run CI on:
-  - **pushes** to `main` and `develop`, and
-  - **pull requests** targeting `develop`.
+### Requirements
 
-  Adjust the `on`/`trigger`/`pr` sections in
-  [`.github/workflows/ci.yml`](.github/workflows/ci.yml) and
-  [`azure-pipelines.yml`](azure-pipelines.yml) to change this.
-- **Secrets, service connections, OIDC, and permissions** — managed in each
-  platform's settings/YAML, never in the repo.
-- **Runner/agent image** and **prerequisite installation** (Python,
-  `pre-commit`).
+- [`uv`](https://docs.astral.sh/uv/) for the Python toolchain and environment.
+- [`pre-commit`](https://pre-commit.com) and a Python 3.10 interpreter for the
+  commit hooks (see the hook requirements below).
+- Run `make setup` once to wire up the shared git config and hooks.
 
-Everything else — the actual checks — is shared via `make ci`.
-
-### Determinism
-
-- Hook versions are pinned via `rev` in
-  [`.pre-commit-config.yaml`](.pre-commit-config.yaml).
-- The Python interpreter is pinned to **3.10** in both CI stubs (matching the
-  per-hook `language_version`; see [Requirements](#requirements)).
-- Both stubs cache pre-commit hook environments keyed on the config file, so
-  unchanged hooks are not rebuilt.
-
-Bump these versions deliberately when you want to upgrade.
-
-## Make targets
-
-| Target | Description |
-| --- | --- |
-| `make help` | Show available targets (default when running `make`). |
-| `make setup` | Configure the repo to use the shared git config and pre-commit hooks. Runs the preflight checks first. |
-| `make ci` | Run the full CI check suite — the single command CI/CD pipelines invoke. Runs identically locally. |
-| `make lint` | Run all pre-commit hooks against all files. |
-| `make check-pre-commit` | Verify the `pre-commit` tool is installed. |
-| `make check-python` | Verify a Python 3.10 interpreter is available for the hooks. |
-
-## Troubleshooting
-
-- **`` `pre-commit` not found ``** — install the tool (see [Requirements](#requirements)).
-- **commitizen / sync-pre-commit-deps fails to build / `requires a different Python`** —
-  a Python 3.10 interpreter could not be found. Install it (see
-  [Requirements](#requirements)) and re-run `make check-python` to confirm it is
-  detected. The interpreter is pinned per-hook via `language_version: python3.10`
-  in [`.pre-commit-config.yaml`](.pre-commit-config.yaml); to standardize on a
-  different version, change those `language_version` values (e.g. to
-  `python3.11`) and make sure that interpreter is installed.
-- **Hook is ignored / not running** — confirm `make setup` has been run
-  (`git config --get include.path` should print `../.gitconfig`) and that the
-  hook scripts in `.githooks/` are executable.
+> **Why a Python 3.10 interpreter for hooks?** Some pre-commit hooks
+> (commitizen, sync-pre-commit-deps) require Python >= 3.10 and are pinned to
+> `python3.10` in [`.pre-commit-config.yaml`](.pre-commit-config.yaml). This is
+> independent of the package itself, which targets Python >= 3.12. Install a
+> 3.10 interpreter (it need not be your default `python3`): `brew install
+> python@3.10` (macOS), `sudo apt install python3.10` (Debian/Ubuntu), or
+> `pyenv install 3.10`.

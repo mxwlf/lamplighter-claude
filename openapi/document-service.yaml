@@ -1,0 +1,76 @@
+# OpenAPI specification for the orchestrator's Document Service.
+openapi: 3.1.0
+info:
+  title: Document Service
+  version: 1.0.0
+  description: |
+    The orchestrator endpoint that returns the raw text of a named document
+    (for example a skill's SKILL.md body) when requested by document name. The
+    document `name` equals the skill name.
+
+    FORWARD-LOOKING NOTE: A future revision is expected to introduce a
+    namespace/team path segment (likely `GET /documents/{namespace}/{name}`) so
+    documents can be scoped per team. v1 is name-only; the namespace path is
+    intentionally NOT implemented here.
+servers:
+  - url: https://orchestrator.example/documents
+    description: |
+      Placeholder base URL. The real base URL is provided at runtime via the
+      DOCUMENT_SERVICE_URL environment variable.
+paths:
+  /documents/{name}:
+    get:
+      operationId: getDocument
+      summary: Fetch the raw text of a named document.
+      description: |
+        Returns the raw text body of the document named `name` (for example a
+        skill's SKILL.md). The `name` equals the skill name. An optional
+        `version` query parameter selects a specific revision; when omitted, the
+        orchestrator returns the current version.
+
+        FORWARD-LOOKING NOTE: a future revision is expected to add a
+        namespace/team path segment (likely `GET /documents/{namespace}/{name}`).
+        v1 is name-only.
+      parameters:
+        - name: name
+          in: path
+          required: true
+          description: The document name, equal to the skill name.
+          schema:
+            type: string
+            minLength: 1
+          example: diagnose
+        - name: version
+          in: query
+          required: false
+          description: |
+            Optional document version. When omitted, the current version is
+            returned.
+          schema:
+            type: string
+          example: 1.2.0
+      responses:
+        "200":
+          description: |
+            The raw text body of the requested document (for example SKILL.md
+            content).
+          content:
+            text/plain:
+              schema:
+                type: string
+                description: The raw document text, returned verbatim.
+              example: |
+                ---
+                name: diagnose
+                ---
+
+                # Diagnose
+
+                Disciplined diagnosis loop for hard bugs.
+        "404":
+          description: No document exists for the requested name (and version, if supplied).
+          content:
+            text/plain:
+              schema:
+                type: string
+              example: document not found

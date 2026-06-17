@@ -1,0 +1,124 @@
+# OpenAPI specification for the orchestrator's Agent Definition Service.
+openapi: 3.1.0
+info:
+  title: Agent Definition Service
+  version: 1.0.0
+  description: |
+    The orchestrator endpoint that returns an agent definition as JSON when
+    requested by agent id. An agent definition is the bundle describing what an
+    agent needs for its task: skills and task context/instructions (and, in
+    future revisions, hooks, MCPs, etc.). Lamplighter reads this to bootstrap a
+    local agent.
+
+    Forward compatibility: clients ignore unknown top-level keys (for example
+    future `hooks` or `mcps`), so the AgentDefinition schema sets
+    `additionalProperties: true`.
+servers:
+  - url: https://orchestrator.example/agent-definitions
+    description: |
+      Placeholder base URL. The real base URL is provided at runtime via the
+      AGENT_DEFINITION_SERVICE_URL environment variable.
+paths:
+  /agents/{agent_id}:
+    get:
+      operationId: getAgentDefinition
+      summary: Fetch the agent definition for a given agent id.
+      description: |
+        Returns the agent definition for the local agent identified by
+        `agent_id`. The agent id is read by Lamplighter from the AGENT_ID
+        environment variable.
+      parameters:
+        - name: agent_id
+          in: path
+          required: true
+          description: |
+            The identifier for the local agent, echoed in the response body for
+            traceability.
+          schema:
+            type: string
+            minLength: 1
+          example: agent-007
+      responses:
+        "200":
+          description: The agent definition for the requested agent id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentDefinition"
+              example:
+                agent_id: agent-007
+                skills:
+                  - name: diagnose
+                    version: 1.2.0
+                  - name: review
+                task:
+                  context: Fix the failing build on the feat/skill-bootstrap branch.
+                  instructions: Run the tests, identify the regression, and patch it.
+        "404":
+          description: No agent definition exists for the requested agent id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: agent not found
+                agent_id: agent-007
+components:
+  schemas:
+    AgentDefinition:
+      type: object
+      description: |
+        A parsed agent definition describing what an agent needs for its task.
+        Unknown top-level keys (for example future `hooks` or `mcps`) are
+        ignored by the parser, so `additionalProperties` is true for forward
+        compatibility.
+      additionalProperties: true
+      properties:
+        agent_id:
+          type: string
+          description: The local agent identifier, echoed for traceability.
+        skills:
+          type: array
+          description: The skills the local agent should load, in payload order.
+          items:
+            $ref: "#/components/schemas/Skill"
+        task:
+          $ref: "#/components/schemas/Task"
+    Skill:
+      type: object
+      description: A unit of task-specific instructions the local agent loads when relevant.
+      required:
+        - name
+      properties:
+        name:
+          type: string
+          minLength: 1
+          description: The skill name; non-empty and load-bearing for installation.
+        version:
+          type:
+            - string
+            - "null"
+          description: Optional version string, or null when unspecified.
+          default: null
+    Task:
+      type: object
+      description: The task context and instructions carried by an agent definition.
+      properties:
+        context:
+          type: string
+          description: Free-form task context; empty string when unspecified.
+          default: ""
+        instructions:
+          type: string
+          description: Free-form task instructions; empty string when unspecified.
+          default: ""
+    Error:
+      type: object
+      description: A simple error payload returned for non-2xx responses.
+      properties:
+        error:
+          type: string
+          description: A human-readable error message.
+        agent_id:
+          type: string
+          description: The agent id that was requested, echoed for traceability.

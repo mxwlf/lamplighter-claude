@@ -25,7 +25,7 @@
 
 .DEFAULT_GOAL := help
 
-.PHONY: setup ci lint check-pre-commit check-python help
+.PHONY: setup ci lint check-pre-commit check-python check-uv py-lint py-typecheck py-test py-build test help
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
@@ -44,10 +44,39 @@ setup: check-pre-commit check-python ## Configure the repo to use the shared git
 #
 # Projects built from this template extend `ci` by adding their own build/test
 # steps (e.g. `dotnet test`, `npm test`) as dependencies or extra recipe lines.
-ci: check-pre-commit lint ## Run the full CI check suite (what pipelines invoke)
+#
+# For Lamplighter, the cookiecutter-pypackage Python checks (ruff, ty, pytest,
+# build) are folded in here per ADR-0004 — so the same `make ci` runs the same
+# checks locally and on every CI platform. They run via `uv`, which manages the
+# Python toolchain and virtualenv.
+ci: check-pre-commit lint py-lint py-typecheck py-test py-build ## Run the full CI check suite (what pipelines invoke)
 
 lint: check-pre-commit ## Run all pre-commit hooks against all files (same hooks as the git hooks)
 	pre-commit run --all-files --show-diff-on-failure
+
+# ---------------------------------------------------------------------------
+# PYTHON CHECKS (run via uv)
+# ---------------------------------------------------------------------------
+py-lint: check-uv ## Check formatting and lint the Python package with ruff
+	uv run ruff format --check .
+	uv run ruff check .
+
+py-typecheck: check-uv ## Type-check the Python package with ty
+	uv run ty check .
+
+py-test: check-uv ## Run the Python test suite with pytest
+	uv run pytest
+
+test: py-test ## Alias for py-test
+
+py-build: check-uv ## Build the Python package (sdist + wheel) to verify packaging
+	uv build
+
+check-uv: ## Verify the uv tool is installed
+	@command -v uv > /dev/null || { \
+		echo 'Error: `uv` not found. Install it from https://docs.astral.sh/uv/ (e.g. `brew install uv`).' 1>&2; \
+		exit 1; \
+	}
 
 check-pre-commit: ## Verify the pre-commit tool is installed
 	@command -v pre-commit > /dev/null || { \
