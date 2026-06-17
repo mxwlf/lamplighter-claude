@@ -43,5 +43,11 @@ jobs:
 
       - run: pipx install pre-commit
 
+      # uv is required by the Python checks in `make ci` (py-lint, py-typecheck,
+      # py-test, py-build). Pin to a specific version for determinism.
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.7.12"
+
       # The single entrypoint. Everything CI does is defined in the Makefile.
       - run: make ci
