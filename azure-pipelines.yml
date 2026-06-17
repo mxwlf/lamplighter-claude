@@ -47,6 +47,11 @@ steps:
   - script: pipx install pre-commit
     displayName: Install pre-commit
 
+  # uv manages the Python toolchain and runs the package's ruff/ty/pytest/build
+  # checks that `make ci` invokes (folded in per ADR-0004).
+  - script: pipx install uv
+    displayName: Install uv
+
   # The single entrypoint. Everything CI does is defined in the Makefile.
   - script: make ci
     displayName: make ci
